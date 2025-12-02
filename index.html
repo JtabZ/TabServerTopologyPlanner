@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full bg-gray-50">
 <head>
-    <meta charset="UTF-g">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tableau Topology Planner</title>
+    <title>Tableau Topology Planner - Enhanced</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -20,8 +20,6 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-
-        /* Custom style for the info tooltip */
         .info-tooltip-container {
             position: relative;
             display: inline-block;
@@ -29,11 +27,10 @@
 
         .info-tooltip {
             visibility: hidden;
-            /* width: 300px; */ /* Removed fixed width */
-            min-width: 350px; /* <-- ADDED THIS */
-            max-width: 400px; /* Added max-width */
-            white-space: normal; /* Added for text wrapping */
-            background-color: #1f2937; /* dark-gray */
+            min-width: 350px;
+            max-width: 400px;
+            white-space: normal;
+            background-color: #1f2937;
             color: #fff;
             text-align: left;
             border-radius: 6px;
@@ -42,21 +39,19 @@
             z-index: 50;
             opacity: 0;
             transition: opacity 0.3s;
-            font-size: 0.875rem; /* text-sm */
+            font-size: 0.875rem;
             line-height: 1.25rem;
-            
-            /* Position to the right */
             left: 100%;
             top: 50%;
             transform: translateY(-50%);
-            margin-left: 8px; /* small gap */
+            margin-left: 8px;
         }
         
         .info-tooltip::before {
             content: "";
             position: absolute;
             top: 50%;
-            right: 100%; /* At the left edge of the tooltip */
+            right: 100%;
             margin-top: -5px;
             border-width: 5px;
             border-style: solid;
@@ -73,14 +68,24 @@
             margin-top: 4px;
         }
 
-        /* --- FIX for tooltip clipping --- */
-        /* When hovering a row, bring it and its children (like the tooltip)
-           to the front so it's not clipped by subsequent rows. */
         tbody tr:hover {
             position: relative;
             z-index: 25;
         }
-        /* --- End of fix --- */
+        
+        .auto-managed {
+            background-color: #f3f4f6;
+            cursor: not-allowed;
+        }
+        
+        .auto-managed-label {
+            background-color: #e5e7eb;
+            color: #6b7280;
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 4px;
+        }
     </style>
 </head>
 <body class="h-full font-sans">
@@ -90,6 +95,7 @@
         <div class="mb-6">
             <h1 class="text-3xl font-bold text-gray-900">Tableau Topology Planner</h1>
             <p class="text-lg text-gray-600 mt-1">Design and validate your Tableau Server architecture against best practices.</p>
+            <p class="text-sm text-blue-600 mt-1">✨ Enhanced with automatic process management and dependency tracking</p>
         </div>
 
         <!-- Controls -->
@@ -105,7 +111,6 @@
                 Toggle Graphic View
             </button>
             
-            <!-- NEW BUTTONS START -->
             <button id="export-config" class="bg-green-600 text-white px-4 py-2 rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
                 Export Config
             </button>
@@ -117,7 +122,6 @@
             <button id="reset-grid" class="bg-red-600 text-white px-4 py-2 rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
                 Reset
             </button>
-            <!-- NEW BUTTONS END -->
             
             <div class="ml-auto flex items-center gap-2">
                 <span class="text-xl font-bold text-gray-800">Total Cores:</span>
@@ -128,9 +132,9 @@
         <!-- Main Content: Table and Notes -->
         <div class="flex flex-col lg:flex-row gap-6">
             
-            <!-- Topology Table (scrollable) -->
+            <!-- Topology Table (no scrolling) -->
             <div class="flex-grow lg:w-3/4">
-                <div id="table-container" class="overflow-x-auto bg-white rounded-lg shadow">
+                <div id="table-container" class="bg-white rounded-lg shadow">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead id="topology-head" class="bg-gray-50 sticky top-0">
                             <!-- Header row will be built by JS -->
@@ -160,721 +164,522 @@
     </div>
 
     <script>
-        // --- Process Info (from https://help.tableau.com/current/server/en-us/processes.htm) ---
-        const allProcessInfo = {
-            'activationservice': {
-                purpose: 'Manages licensing for Tableau Server, including the activation, refresh, and deactivation of product keys.',
-                notes: 'Required for Tableau Server to run. One instance is required.',
-                licensed: 'No'
-            },
-            'activemqserver': {
-                purpose: 'The message broker for Tableau Server. It provides a message service for all components.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'analysisserver': {
-                purpose: 'Manages the connection to analytic extensions.',
-                notes: 'Previously called "R Server".',
-                licensed: 'No'
-            },
-            'api-gateway': {
-                purpose: 'Handles requests to the Tableau REST API.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'authnservice': {
-                purpose: 'Handles authentication requests and integration with identity providers (IdPs).',
-                notes: 'One instance is required.',
-                licensed: 'No'
+        // ===== PROCESS CONFIGURATION =====
+        // Define which processes are user-configurable vs automatically managed
+        const processConfig = {
+            // User-configurable processes (from Architecture Playbook)
+            'vizqlserver': {
+                userConfigurable: true,
+                purpose: 'Responsible for viz generation and interaction, including web authoring',
+                notes: 'Each VizQL process needs 4 cores. Ideal: 16 cores for 4 VizQL instances (max recommended per node).',
+                licensed: 'Yes',
+                autoInstalls: ['gateway', 'hyper'],
+                guidanceRules: [
+                    { condition: (count, cores) => count > 0 && cores < count * 4, message: (count, cores) => 'Insufficient cores: ' + count + ' VizQL instance' + (count > 1 ? 's' : '') + ' need' + (count === 1 ? 's' : '') + ' at least ' + (count * 4) + ' cores (4 cores per instance)', severity: 'error' },
+                    { condition: (count, cores) => count > Math.floor(cores / 4), message: (count, cores) => 'Too many VizQL instances for available cores. Maximum recommended: ' + Math.floor(cores / 4), severity: 'error' },
+                    { condition: (count) => count > 4, message: (count) => 'More than 4 VizQL instances per node shows diminishing returns', severity: 'warning' }
+                ]
             },
             'backgrounder': {
-                purpose: 'Executes server tasks, including extract refreshes, subscriptions, flow runs, and data-driven alerts.',
-                notes: 'Can be configured to run specific task types.',
-                licensed: 'Yes'
+                userConfigurable: true,
+                purpose: 'Runs server tasks: extract refreshes, subscriptions, Run Now tasks',
+                notes: 'Single-threaded. Isolated: cores/2 to cores/1.5. Co-located: cores/4 to cores/2',
+                licensed: 'Yes',
+                autoInstalls: ['hyper'],
+                guidanceRules: [
+                    { condition: (count, cores, node) => count > Math.floor(cores / 2), message: 'Too many Backgrounder instances. Isolated max: cores/2', severity: 'error' },
+                    { condition: (count, cores, node) => hasVizQL(node) && count > 0, message: 'Backgrounder should be isolated from VizQL for best performance', severity: 'warning' }
+                ]
             },
-            'backupsrestore': {
-                purpose: 'Handles backup and restore operations.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'cacheservice': {
-                purpose: 'A distributed in-memory cache for queries, workbook metadata, and more.',
-                notes: 'Also known as "Cache Server". Uses Redis.',
-                licensed: 'No'
-            },
-            'clientservice': {
-                purpose: 'Handles client requests for the Tableau Server web interface.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'collections': {
-                purpose: 'Enables the "Collections" feature, allowing users to group and organize content.',
-                notes: '',
-                licensed: 'No'
-            },
-            'contentexploration': {
-                purpose: 'Powers content recommendations and search result suggestions.',
-                notes: '',
-                licensed: 'No'
-            },
-            'databasemaintenance': {
-                purpose: 'Handles database maintenance tasks.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
+            'cacheserver': {
+                userConfigurable: true,
+                purpose: 'Query cache distributed across the cluster',
+                notes: 'Single-threaded. Max 6 instances cluster-wide, max 2 per node',
+                licensed: 'No',
+                guidanceRules: [
+                    { condition: (count) => count > 2, message: 'Max 2 Cache Server instances per node recommended', severity: 'warning' },
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'cacheserver') > 6, message: 'More than 6 Cache Servers cluster-wide provides no benefit', severity: 'warning' }
+                ]
             },
             'dataserver': {
-                purpose: 'Manages connections to Tableau Server data sources, both live and extracts.',
-                notes: 'Handles Ask Data (NLP) queries.',
-                licensed: 'No'
-            },
-            'datasourceproperties': {
-                purpose: 'Manages datasource properties and metadata.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'elasticserver': {
-                purpose: 'Handles indexing for Ask Data (NLP).',
-                notes: 'Used in versions prior to 2022.1. Replaced by Index and Search Server.',
-                licensed: 'No'
+                userConfigurable: true,
+                purpose: 'Manages connections to published data sources',
+                notes: '2 per machine for redundancy. More than 2 dilutes in-memory caches',
+                licensed: 'Yes',
+                autoInstalls: ['hyper'],
+                guidanceRules: [
+                    { condition: (count) => count > 2, message: 'More than 2 Data Server instances per node can reduce performance', severity: 'warning' }
+                ]
             },
             'filestore': {
-                purpose: 'Manages the storage and replication of data extracts (.hyper files) and flow files.',
-                notes: 'At least one instance is required. Automatically installs Data Engine (hyper).',
-                licensed: 'Yes'
-            },
-            'floweditor': {
-                purpose: 'Enables editing of Tableau Prep flows directly in the web interface.',
-                notes: 'Requires Data Management Add-on. This process is not user-configurable.',
-                licensed: 'Yes'
-            },
-            'flowprocessor': {
-                purpose: 'Handles the execution of flow-related tasks initiated by the user.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'Yes'
-            },
-            'gateway': {
-                purpose: 'Acts as a reverse proxy and load balancer, routing requests to the appropriate Tableau Server components.',
-                notes: 'One instance is required on each node.',
-                licensed: 'No'
-            },
-            'hyper': {
-                purpose: 'The Tableau Data Engine. Handles all tasks related to creating, refreshing, and querying data extracts.',
-                notes: 'Not directly configurable. Automatically installed with processes that depend on it (VizQL, Backgrounder, Data Server, File Store, Vizportal).',
-                licensed: 'Yes'
-            },
-            'indexandsearchserver': {
-                purpose: 'Powers fast search, filter, and display of content on the server.',
-                notes: 'Replaces Search & Browse and Elastic Server (for Ask Data) as of 2022.1.',
-                licensed: 'No'
-            },
-            'interactive': {
-                purpose: 'Powers interactive dashboards and worksheets. This process is not user-configurable.',
-                notes: '',
-                licensed: 'Yes'
-            },
-            'metrics': {
-                purpose: 'Handles the creation, refresh, and display of Metrics.',
-                notes: 'This feature was retired in 2023.3.',
-                licensed: 'Yes'
-            },
-            'minerva': {
-                purpose: 'Handles communication between data sources.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'noninteractive': {
-                purpose: 'Handles background rendering tasks, like for subscriptions.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'Yes'
-            },
-            'pgsql': {
-                purpose: 'The Tableau Server repository, a PostgreSQL database that stores all metadata for workbooks, users, permissions, and more.',
-                notes: 'Only one active instance can exist. A passive instance can be configured for HA.',
-                licensed: 'No'
-            },
-            'publishedconnections': {
-                purpose: 'Manages published data source connections.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'querygateway': {
-                purpose: 'Manages requests for Ask Data (NLP).',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'siteimports': {
-                purpose: 'Handles the import of sites.',
-                notes: 'This process is not user-configurable.',
-                licensed: 'No'
-            },
-            'tabadmincontroller': {
-                purpose: 'The TSM (Tableau Services Manager) controller for managing the server configuration and topology.',
-                notes: 'One instance is required on each node.',
-                licensed: 'No'
+                userConfigurable: true,
+                purpose: 'Stores and replicates extracts across the cluster',
+                notes: 'Recommended: 3 per environment for HA balance',
+                licensed: 'No',
+                autoInstalls: ['hyper'],
+                guidanceRules: [
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'filestore') < 2, message: 'At least 2 File Store instances recommended for redundancy', severity: 'info' },
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'filestore') > 3, message: 'More than 3 File Store instances increases replication traffic', severity: 'info' }
+                ]
             },
             'vizportal': {
-                purpose: 'The main web application for Tableau Server. Handles browsing, searching, permissions, and the web authoring UI.',
-                notes: 'Also known as "Application Server".',
-                licensed: 'No'
-            },
-            'vizqlserver': {
-                purpose: 'Renders visualizations and handles user interactions with views (e.g., filtering, tooltips).',
-                notes: 'A core, CPU-intensive process.',
-                licensed: 'Yes'
-            },
-            'webhooks': {
-                purpose: 'Manages outbound webhook notifications.',
-                notes: '',
-                licensed: 'No'
-            }
-        };
-
-        // --- Process List (from URL) ---
-        const fullProcessList = [
-            'activationservice', 'activemqserver', 'analysisserver', 'api-gateway', 'authnservice',
-            'backgrounder', 'backupsrestore', 'cacheservice', 'clientservice', 'collections',
-            'contentexploration', 'databasemaintenance', 'dataserver', 'datasourceproperties', 'elasticserver',
-            'filestore', 'floweditor', 'flowprocessor', 'gateway', 'hyper', 'indexandsearchserver',
-            'interactive', 'metrics', 'minerva', 'noninteractive', 'pgsql', 'publishedconnections',
-            'querygateway', 'siteimports', 'tabadmincontroller', 'vizportal', 'vizqlserver', 'webhooks'
-        ];
-        
-        // --- Create a filtered list of only user-configurable processes ---
-        const processes = fullProcessList.filter(p => {
-            const info = allProcessInfo[p];
-            if (!info || !info.notes) return true; // Keep if no info or no notes
-            if (p === 'hyper') return true; // Keep hyper, we handle it specially
-            return !info.notes.includes("not user-configurable");
-        });
-        
-        // --- Best Practice Rules (from Playbook) ---
-        const rules = {
-            'vizqlserver': {
-                maxPerNode: 4,
-                notes: [
-                    { triggerValue: 4, text: "4 VizQL Servers is best on 16+ cores." }
-                ]
-            },
-            'cacheservice': {
-                maxTotal: 6,
-                notes: [
-                    { triggerTotal: 7, text: "More than 6 Cache Servers creates unnecessary traffic and diminishing returns." },
-                    { triggerTotal: 1, text: "At least 2 Cache Servers are recommended for HA." }
-                ]
-            },
-            'dataserver': {
-                maxPerNode: 2,
-                notes: [
-                    { triggerValue: 3, text: "More than 2 Data Servers per node is not recommended unless needed by Ask Data." }
-                ]
-            },
-            'filestore': {
-                maxPerNode: 1
-            },
-            'hyper': {
-                maxPerNode: 1,
-                // 'hyper' is co-located automatically, so a manual value > 1 is wrong.
-                notes: [
-                    { triggerValue: 2, text: "'hyper' (Data Engine) is limited to 1 per node and is set automatically. Do not add it manually." }
-                ]
+                userConfigurable: true,
+                purpose: 'Handles web UI, REST API, authentication, publishing',
+                notes: 'Pairs well with VizQL Server (heavily reliant on each other)',
+                licensed: 'Yes',
+                autoInstalls: ['hyper', 'analyticsextensions'],
+                guidanceRules: []
             },
             'pgsql': {
-                maxTotal: 2,
-                maxPerNode: 1,
-                notes: [
-                    { triggerTotal: 3, text: "Only one active and one passive 'pgsql' (Repository) instance are allowed." }
-                ]
-            },
-            'backgrounder': {
-                // No hard max, but rules are based on cores (checked in updateBestPractices)
-            },
-            'indexandsearchserver': {
-                notes: [
-                    { triggerTotal: 2, text: "An odd number (e.g., 1, 3, 5) of Index and Search Servers is recommended for HA." },
-                    { triggerTotal: 4, text: "An odd number (e.g., 1, 3, 5) of Index and Search Servers is recommended for HA." }
+                userConfigurable: true,
+                purpose: 'PostgreSQL repository - stores all metadata',
+                notes: 'Max 2 instances (active/passive). Requires 3+ nodes for passive',
+                licensed: 'No',
+                guidanceRules: [
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'pgsql') > 2, message: 'Maximum 2 Repository instances (active + passive) per cluster', severity: 'error' },
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'pgsql') === 2 && allNodes.length < 3, message: 'Passive repository requires 3+ nodes in cluster', severity: 'error' }
                 ]
             },
             'gateway': {
-                notes: [
-                    { triggerValue: 0, text: "At least one 'gateway' is required on every node." }
+                userConfigurable: true,
+                purpose: 'Apache web server - handles all HTTP(S) requests',
+                notes: 'Required on nodes with VizQL, VizPortal, or Flow Authoring',
+                licensed: 'No',
+                guidanceRules: []
+            },
+            'flowprocessor': {
+                userConfigurable: true,
+                purpose: 'Tableau Prep Conductor - runs and schedules flows',
+                notes: 'Automatically enabled where Backgrounder is enabled (unless excluded via node role)',
+                licensed: 'Yes',
+                guidanceRules: [
+                    { condition: (count, cores, node) => count > 0 && node.backgrounder === 0, message: 'Prep Conductor requires Backgrounder on the same node', severity: 'error' }
                 ]
             },
-            'tabadmincontroller': {
-                notes: [
-                    { triggerValue: 0, text: "At least one 'tabadmincontroller' is required on every node." }
+            'floweditor': {
+                userConfigurable: true,
+                purpose: 'Provides interactive Prep Flow authoring in browser',
+                notes: 'Requires flowqueryservice, hyper, and gateway',
+                licensed: 'Yes',
+                autoInstalls: ['flowminerva', 'hyper', 'gateway'],
+                guidanceRules: []
+            },
+            'indexandsearchserver': {
+                userConfigurable: true,
+                purpose: 'AWS OpenSearch based indexing for Ask Data and Content Exploration',
+                notes: 'Recommend odd number of instances (3 or 5) across different nodes',
+                licensed: 'No',
+                guidanceRules: [
+                    { condition: (count, cores, node, allNodes) => {
+                        const total = getTotalProcessCount(allNodes, 'indexandsearchserver');
+                        return total > 0 && total % 2 === 0;
+                    }, message: 'Recommend odd number of Index and Search Server instances cluster-wide', severity: 'info' }
+                ]
+            },
+            'vizdataservice': {
+                userConfigurable: true,
+                purpose: 'Manages connections to published data sources on Tableau Server',
+                notes: 'Added in 2024.2. One or more instances installed on initial node. At least one instance required.',
+                licensed: 'Yes',
+                autoInstalls: ['vizdatanativeservice'],
+                guidanceRules: [
+                    { condition: (count, cores, node, allNodes) => getTotalProcessCount(allNodes, 'vizdataservice') === 0, message: 'At least one instance of VizData Service is required (as of 2024.2.3)', severity: 'error' }
+                ]
+            },
+            
+            // Auto-managed processes (cannot be manually configured)
+            'hyper': {
+                userConfigurable: false,
+                purpose: 'Data Engine - creates, refreshes, and queries extracts',
+                notes: 'Automatically collocated with VizQL, Backgrounder, Data Server, File Store, Flow Editor',
+                licensed: 'Yes',
+                autoConditions: [
+                    { processes: ['vizqlserver', 'backgrounder', 'dataserver', 'filestore', 'vizportal', 'floweditor'] }
+                ]
+            },
+            'clustercontroller': {
+                userConfigurable: false,
+                purpose: 'Monitors components, detects failures, runs failover',
+                notes: 'Automatically installed on every node',
+                licensed: 'No',
+                autoConditions: [{ always: true }]
+            },
+            'gateway_auto': {
+                userConfigurable: false,
+                purpose: 'Auto-installed with VizQL, VizPortal, or Flow Editor',
+                notes: 'Gateway is required on nodes with these processes',
+                licensed: 'No',
+                autoConditions: [
+                    { processes: ['vizqlserver', 'vizportal', 'floweditor'] }
+                ]
+            },
+            'analyticsextensions': {
+                userConfigurable: false,
+                purpose: 'Supports R, Python, Einstein Discovery integration',
+                notes: 'Automatically installed on any node where Application Server (VizPortal) is installed',
+                licensed: 'No',
+                autoConditions: [
+                    { processes: ['vizportal'] }
+                ]
+            },
+            'flowminerva': {
+                userConfigurable: false,
+                purpose: 'Used by Flow Authoring for querying datasources',
+                notes: 'Automatically enabled where Flow Authoring (floweditor) is enabled',
+                licensed: 'Yes',
+                autoConditions: [
+                    { processes: ['floweditor'] }
+                ]
+            },
+            'vizdatanativeservice': {
+                userConfigurable: false,
+                purpose: 'Communicates with the VizData Service on Tableau Server',
+                notes: 'Automatically added for each instance of VizData Service (Added in 2024.2)',
+                licensed: 'Yes',
+                autoConditions: [
+                    { processes: ['vizdataservice'] }
                 ]
             }
         };
 
-        // --- Node Templates (from Playbook & Help Docs) ---
-        // Templates are now filtered to only include configurable processes
-        const templates = {
-            "Analytics Node": {
-                'vizportal': 2, 'vizqlserver': 2, 'cacheservice': 2, 'dataserver': 2,
-                'gateway': 1, 'indexandsearchserver': 1, 'filestore': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1,
-            },
-            "Backgrounder Node": {
-                'backgrounder': 4,
-                'gateway': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1,
-            },
-            "Gateway Only": {
-                'gateway': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1
-            },
-            "Initial Node (Minimal)": {
-                'gateway': 1, 'filestore': 1, 'pgsql': 1, 'vizportal': 1, 'vizqlserver': 1, 'cacheservice': 1, 'dataserver': 1,
-                'indexandsearchserver': 1, 'backgrounder': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1,
-            },
-            "Initial Node (HA Main)": {
-                'gateway': 1, 'pgsql': 1, 'vizportal': 2, 'vizqlserver': 2, 'cacheservice': 2, 'dataserver': 2,
-                'indexandsearchserver': 1, 'filestore': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1,
-            },
-            "HA Worker (Passive)": {
-                'gateway': 1, 'pgsql': 1, 'backgrounder': 4, 'vizportal': 2, 'vizqlserver': 2, 'cacheservice': 2, 'dataserver': 2,
-                'indexandsearchserver': 1, 'filestore': 1, 'tabadmincontroller': 1, 'activationservice': 1, 'authnservice': 1,
-            }
-        };
+        // List of user-configurable processes for the UI
+        const processes = Object.keys(processConfig).filter(p => processConfig[p].userConfigurable).sort();
+        
+        // Auto-managed processes to track and display
+        const autoManagedProcesses = Object.keys(processConfig).filter(p => !processConfig[p].userConfigurable).sort();
 
         let isGraphicView = false;
+
+        // ===== HELPER FUNCTIONS =====
         
-        document.addEventListener('DOMContentLoaded', () => {
-            const buildButton = document.getElementById('build-grid');
-            const toggleButton = document.getElementById('toggle-graphic');
-            const tableContainer = document.getElementById('table-container');
-
-            // NEW: Get new buttons
-            const exportButton = document.getElementById('export-config');
-            const importButton = document.getElementById('import-config-btn');
-            const importFileInput = document.getElementById('import-file');
-            const resetButton = document.getElementById('reset-grid');
-
-            buildButton.addEventListener('click', () => {
-                buildTopologyGrid();
-                updateAll();
-            });
-            toggleButton.addEventListener('click', toggleGraphicView);
+        function hasVizQL(nodeData) {
+            return nodeData && nodeData.vizqlserver > 0;
+        }
+        
+        function getTotalProcessCount(allNodes, processName) {
+            return allNodes.reduce((sum, node) => sum + (node[processName] || 0), 0);
+        }
+        
+        function calculateAutoManagedProcesses(nodeIndex) {
+            const nodeData = getCurrentNodeData(nodeIndex);
+            const autoManaged = {};
             
-            // NEW: Add new listeners
-            exportButton.addEventListener('click', exportConfig);
-            importButton.addEventListener('click', () => importFileInput.click());
-            importFileInput.addEventListener('change', importConfig);
-            resetButton.addEventListener('click', resetGrid);
-            
-            // Delegate events for dynamic inputs
-            tableContainer.addEventListener('input', (e) => {
-                if (e.target.matches('.process-input, .core-count-input')) {
-                    if (e.target.matches('.process-input')) {
-                        handleProcessInput(e.target);
+            autoManagedProcesses.forEach(processName => {
+                const config = processConfig[processName];
+                let shouldInstall = 0;
+                
+                if (config.autoConditions) {
+                    for (const condition of config.autoConditions) {
+                        if (condition.always) {
+                            shouldInstall = 1;
+                            break;
+                        }
+                        if (condition.processes) {
+                            // Special handling for vizdatanativeservice - match count of vizdataservice
+                            if (processName === 'vizdatanativeservice' && condition.processes.includes('vizdataservice')) {
+                                shouldInstall = nodeData['vizdataservice'] || 0;
+                                break;
+                            } else {
+                                // For other processes, install 1 instance if any trigger process exists
+                                shouldInstall = condition.processes.some(p => nodeData[p] > 0) ? 1 : 0;
+                                if (shouldInstall) break;
+                            }
+                        }
                     }
-                    updateAll();
                 }
+                
+                autoManaged[processName] = shouldInstall;
             });
-
-            // Delegate events for template dropdowns
-            tableContainer.addEventListener('change', (e) => {
-                if (e.target.matches('.template-select')) {
-                    applyTemplate(e.target);
-                }
-                if (e.target.matches('.copy-select')) {
-                    handleCopyNode(e.target);
-                }
-            });
-
-            // Initial build
-            buildTopologyGrid();
-            updateAll();
-        });
-
-        function buildTopologyGrid() {
-            const nodeCountInput = document.getElementById('node-count');
-            const head = document.getElementById('topology-head');
-            const body = document.getElementById('topology-body');
             
-            let nodeCount = parseInt(nodeCountInput.value, 10);
-            if (nodeCount < 1 || isNaN(nodeCount)) {
-                nodeCount = 1;
-                nodeCountInput.value = 1;
-            }
-
-            // --- Build Header ---
-            head.innerHTML = ''; // Clear existing header
-            let headerRow = head.insertRow();
-            let thProcess = document.createElement('th');
-            thProcess.className = "sticky left-0 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider z-10";
-            thProcess.textContent = 'Process';
-            headerRow.appendChild(thProcess);
-
-            let thTotal = document.createElement('th');
-            thTotal.className = "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
-            thTotal.textContent = 'Total Count';
-            headerRow.appendChild(thTotal);
-
-            for (let i = 1; i <= nodeCount; i++) {
-                let thNode = document.createElement('th');
-                thNode.className = "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
-                
-                // Add Core Count Input
-                let coreInputHtml = `
-                    <div class="mb-1">
-                        <label for="core-count-${i}" class="text-xs font-normal normal-case">Cores: </label>
-                        <input type="number" id="core-count-${i}"
-                               class="core-count-input w-16 text-xs p-1 border-gray-300 rounded-md shadow-sm"
-                               value="8" min="4" data-node-index="${i - 1}">
-                    </div>
-                `;
-
-                // Add "Apply Template" dropdown
-                let select = document.createElement('select');
-                select.className = "template-select mt-1 block w-full rounded-md border-gray-300 shadow-sm text-xs p-1";
-                select.setAttribute('data-node-index', i - 1);
-                select.innerHTML = '<option value="">Apply Template...</option>';
-                for (const tplName in templates) {
-                    let option = document.createElement('option');
-                    option.value = tplName;
-                    option.textContent = tplName;
-                    select.appendChild(option);
-                }
-                
-                // Add "Copy to..." dropdown
-                let copySelect = document.createElement('select');
-                copySelect.className = "copy-select mt-1 block w-full rounded-md border-gray-300 shadow-sm text-xs p-1";
-                copySelect.setAttribute('data-node-index', i - 1);
-                copySelect.innerHTML = '<option value="">Copy to...</option>';
-                for (let j = 1; j <= nodeCount; j++) {
-                    if (i === j) continue; // Don't copy to self
-                    let option = document.createElement('option');
-                    option.value = j - 1; // Store target node index
-                    option.textContent = `Node ${j}`;
-                    copySelect.appendChild(option);
-                }
-                
-                thNode.innerHTML = `Node ${i} / Hostname ${i}<br>${coreInputHtml}`;
-                thNode.appendChild(select);
-                thNode.appendChild(copySelect);
-                headerRow.appendChild(thNode);
-            }
-
-            // --- Build Body ---
-            body.innerHTML = ''; // Clear existing body
+            return autoManaged;
+        }
+        
+        function getCurrentNodeData(nodeIndex) {
+            const data = {};
             processes.forEach(processName => {
-                let row = body.insertRow();
-                row.className = "hover:bg-gray-50";
+                const input = document.querySelector(`input[data-process="${processName}"][data-node-index="${nodeIndex}"]`);
+                data[processName] = input ? parseInt(input.value, 10) || 0 : 0;
+            });
+            return data;
+        }
+        
+        function getAllNodesData() {
+            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
+            const nodes = [];
+            for (let i = 0; i < nodeCount; i++) {
+                nodes.push(getCurrentNodeData(i));
+            }
+            return nodes;
+        }
 
-                let cellProcess = row.insertCell();
-                cellProcess.className = "px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900 sticky left-0 bg-white";
+        // ===== BUILD TOPOLOGY GRID =====
+        
+        function buildTopologyGrid() {
+            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
+            const theadRow = document.getElementById('topology-head');
+            const tbody = document.getElementById('topology-body');
+            
+            theadRow.innerHTML = '';
+            tbody.innerHTML = '';
+            isGraphicView = false;
+
+            // Header row
+            let headerHTML = '<tr><th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Process</th>';
+            for (let i = 0; i < nodeCount; i++) {
+                headerHTML += `
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Node ${i + 1}
+                        <div class="mt-1">
+                            <input type="number" 
+                                   class="core-count-input w-16 text-center rounded border-gray-300 text-sm" 
+                                   data-node-index="${i}" 
+                                   value="8" 
+                                   min="4" 
+                                   max="64" 
+                                   placeholder="Cores">
+                            <div class="text-xs text-gray-400 mt-1">cores</div>
+                        </div>
+                        <div class="mt-2">
+                            <select class="copy-to-select w-full text-xs rounded border-gray-300" data-node-index="${i}">
+                                <option value="">Copy to...</option>
+                                ${Array.from({length: nodeCount}, (_, j) => j !== i ? `<option value="${j}">Node ${j + 1}</option>` : '').join('')}
+                            </select>
+                        </div>
+                    </th>
+                `;
+            }
+            headerHTML += '</tr>';
+            theadRow.innerHTML = headerHTML;
+
+            // User-configurable processes
+            processes.forEach(processName => {
+                const config = processConfig[processName];
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
                 
-                // --- Add Info Icon and Tooltip ---
-                const info = allProcessInfo[processName]; // <-- FIX: Use allProcessInfo
-                let infoHtml = '';
-                if (info) {
-                    infoHtml = `
-                        <div class="info-tooltip-container">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline-block text-blue-500 ml-1" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
-                            </svg>
-                            <div class="info-tooltip">
-                                <strong class="block">Purpose:</strong>
-                                <span class="info-tooltip-content">${info.purpose || 'N/A'}</span>
-                                <strong class="block mt-2">Licensed:</strong>
-                                <span class="info-tooltip-content">${info.licensed}</span>
-                                ${info.notes ? `
-                                <strong class="block mt-2">Notes:</strong>
-                                <span class="info-tooltip-content">${info.notes}</span>
-                                ` : ''}
+                let rowHTML = `
+                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                        <div class="flex items-center">
+                            <span>${processName}</span>
+                            <span class="total-process-count ml-2 text-xs font-normal text-gray-500" data-process="${processName}">(0)</span>
+                            <div class="info-tooltip-container">
+                                <svg class="w-4 h-4 ml-2 text-blue-500 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                                </svg>
+                                <div class="info-tooltip">
+                                    <strong>Purpose:</strong> ${config.purpose}
+                                    <div class="info-tooltip-content"><strong>Notes:</strong> ${config.notes}</div>
+                                    <div class="info-tooltip-content"><strong>Licensed:</strong> ${config.licensed}</div>
+                                </div>
                             </div>
                         </div>
+                    </td>
+                `;
+                
+                for (let i = 0; i < nodeCount; i++) {
+                    rowHTML += `
+                        <td class="px-4 py-2 text-center">
+                            <input type="number" 
+                                   class="process-input w-16 text-center rounded border-gray-300 py-1" 
+                                   data-process="${processName}" 
+                                   data-node-index="${i}" 
+                                   value="0" 
+                                   min="0" 
+                                   max="20">
+                            <div class="graphic-view hidden text-green-600 font-bold"></div>
+                        </td>
                     `;
                 }
-                cellProcess.innerHTML = `${processName} ${infoHtml}`;
-
-                let cellTotal = row.insertCell();
-                cellTotal.className = "px-4 py-3 whitespace-nowrap text-sm text-gray-500";
-                cellTotal.innerHTML = `<span id="total-${processName}" class="font-bold">0</span>`;
-
-                for (let i = 0; i < nodeCount; i++) {
-                    let cellNode = row.insertCell();
-                    cellNode.className = "px-4 py-3 whitespace-nowrap text-sm text-gray-500";
-                    
-                    let defaultValue = 0;
-                    if (['gateway', 'tabadmincontroller', 'activationservice', 'authnservice'].includes(processName)) {
-                        defaultValue = 1;
-                    }
-                    
-                    // Special handling for 'hyper': make it read-only
-                    if (processName === 'hyper') {
-                         cellNode.innerHTML = `
-                            <input type="number" 
-                                   id="input-${processName}-${i}"
-                                   class="process-input w-16 rounded-md border-gray-300 shadow-sm sm:text-sm bg-gray-100"
-                                   value="0" min="0" readonly disabled
-                                   data-process="${processName}"
-                                   data-node-index="${i}">
-                            <div class="graphic-view hidden text-green-600 font-bold text-lg"></div>
-                        `;
-                    } else {
-                         cellNode.innerHTML = `
-                            <input type="number" 
-                                   id="input-${processName}-${i}"
-                                   class="process-input w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                                   value="${defaultValue}" min="0"
-                                   data-process="${processName}"
-                                   data-node-index="${i}">
-                            <div class="graphic-view hidden text-green-600 font-bold text-lg"></div>
-                        `;
-                    }
-                }
-            });
-
-            isGraphicView = false; // Reset view toggle
-        }
-
-        function updateAll() {
-            updateTotalCounts();
-            updateTotalCoreCount();
-            updateBestPractices();
-        }
-
-        // --- Core Logic Functions ---
-
-        function handleProcessInput(input) {
-            const processName = input.dataset.process;
-            const nodeIndex = input.dataset.nodeIndex;
-            const value = parseInt(input.value, 10);
-            
-            // Auto-colocation for 'hyper' (Data Engine)
-            const dependencies = ['vizqlserver', 'vizportal', 'dataserver', 'backgrounder', 'filestore'];
-            if (dependencies.includes(processName) && value > 0) {
-                const hyperInput = document.querySelector(`input[data-process="hyper"][data-node-index="${nodeIndex}"]`);
-                if (hyperInput) {
-                    hyperInput.value = 1;
-                    hyperInput.disabled = true;
-                    hyperInput.classList.add("bg-gray-100");
-                }
-            }
-            
-            // Check if 'hyper' dependency is removed
-            if (processName === 'hyper') {
-                // User is trying to manually edit hyper. Re-check dependencies.
-                checkHyperDependencies(nodeIndex);
-            } else {
-                // A dependency might have been set to 0
-                checkHyperDependencies(nodeIndex);
-            }
-        }
-        
-        function checkHyperDependencies(nodeIndex) {
-            const dependencies = ['vizqlserver', 'vizportal', 'dataserver', 'backgrounder', 'filestore'];
-            let hasDependency = false;
-            for (const dep of dependencies) {
-                const depInput = document.querySelector(`input[data-process="${dep}"][data-node-index="${nodeIndex}"]`);
-                if (depInput && parseInt(depInput.value, 10) > 0) {
-                    hasDependency = true;
-                    break;
-                }
-            }
-            
-            const hyperInput = document.querySelector(`input[data-process="hyper"][data-node-index="${nodeIndex}"]`);
-            if (hyperInput) {
-                if (hasDependency) {
-                    hyperInput.value = 1;
-                    hyperInput.disabled = true;
-                    hyperInput.classList.add("bg-gray-100");
-                } else {
-                    hyperInput.value = 0;
-                    hyperInput.disabled = false;
-                    hyperInput.classList.remove("bg-gray-100");
-                }
-            }
-        }
-
-        function updateTotalCounts() {
-            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
-            processes.forEach(processName => {
-                let total = 0;
-                for (let i = 0; i < nodeCount; i++) {
-                    const input = document.querySelector(`input[data-process="${processName}"][data-node-index="${i}"]`);
-                    if (input) {
-                        total += parseInt(input.value, 10) || 0;
-                    }
-                }
-                const totalEl = document.getElementById(`total-${processName}`);
-                if (totalEl) {
-                    totalEl.textContent = total;
-                }
-            });
-        }
-        
-        function updateTotalCoreCount() {
-            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
-            let totalCores = 0;
-            for (let i = 0; i < nodeCount; i++) {
-                const coreInput = document.querySelector(`input.core-count-input[data-node-index="${i}"]`);
-                if (coreInput) {
-                    totalCores += parseInt(coreInput.value, 10) || 0;
-                }
-            }
-            const totalCoreDisplay = document.getElementById('total-core-display');
-            if (totalCoreDisplay) {
-                totalCoreDisplay.textContent = totalCores;
-            }
-        }
-
-        function updateBestPractices() {
-            const notesList = document.getElementById('notes-list');
-            const notesContainer = document.getElementById('notes-container').querySelector('p');
-            notesList.innerHTML = '';
-            let displayedNotes = new Set();
-            
-            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
-
-            // Now, check rules for each process
-            processes.forEach(processName => {
-                const ruleset = rules[processName];
-                if (!ruleset) return;
-
-                const totalEl = document.getElementById(`total-${processName}`);
-                const total = totalEl ? parseInt(totalEl.textContent, 10) : 0;
                 
-                // Check total rules
-                if (ruleset.notes) {
-                    ruleset.notes.forEach(note => {
-                        if (note.triggerTotal && total >= note.triggerTotal) {
-                            addNote(`${processName} (Total): ${note.text}`, displayedNotes);
+                row.innerHTML = rowHTML;
+                tbody.appendChild(row);
+            });
+            
+            // Auto-managed processes (read-only display)
+            autoManagedProcesses.forEach(processName => {
+                const config = processConfig[processName];
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 bg-gray-50';
+                
+                let rowHTML = `
+                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-700">
+                        <div class="flex items-center">
+                            <span>${processName}</span>
+                            <span class="total-process-count ml-2 text-xs font-normal text-gray-500" data-process="${processName}">(0)</span>
+                            <span class="auto-managed-label">AUTO</span>
+                            <div class="info-tooltip-container">
+                                <svg class="w-4 h-4 ml-2 text-blue-500 cursor-help" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                                </svg>
+                                <div class="info-tooltip">
+                                    <strong>Purpose:</strong> ${config.purpose}
+                                    <div class="info-tooltip-content"><strong>Notes:</strong> ${config.notes}</div>
+                                    <div class="info-tooltip-content"><strong>Licensed:</strong> ${config.licensed}</div>
+                                    <div class="info-tooltip-content"><em>This process is automatically managed and cannot be manually configured.</em></div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                `;
+                
+                for (let i = 0; i < nodeCount; i++) {
+                    rowHTML += `
+                        <td class="px-4 py-2 text-center">
+                            <div class="auto-managed-display font-mono text-sm text-gray-600" 
+                                 data-process="${processName}" 
+                                 data-node-index="${i}">0</div>
+                        </td>
+                    `;
+                }
+                
+                row.innerHTML = rowHTML;
+                tbody.appendChild(row);
+            });
+
+            // Attach event listeners
+            document.querySelectorAll('.process-input').forEach(input => {
+                input.addEventListener('input', () => {
+                    const nodeIndex = input.dataset.nodeIndex;
+                    updateAutoManagedProcesses(nodeIndex);
+                    updateAll();
+                });
+            });
+            
+            document.querySelectorAll('.core-count-input').forEach(input => {
+                input.addEventListener('input', updateAll);
+            });
+            
+            document.querySelectorAll('.copy-to-select').forEach(select => {
+                select.addEventListener('change', (e) => copyNodeConfiguration(e.target));
+            });
+
+            updateAll();
+        }
+
+        // ===== UPDATE FUNCTIONS =====
+        
+        function updateAutoManagedProcesses(nodeIndex) {
+            const autoManaged = calculateAutoManagedProcesses(nodeIndex);
+            
+            Object.keys(autoManaged).forEach(processName => {
+                const displayElement = document.querySelector(
+                    `.auto-managed-display[data-process="${processName}"][data-node-index="${nodeIndex}"]`
+                );
+                if (displayElement) {
+                    displayElement.textContent = autoManaged[processName];
+                }
+            });
+        }
+        
+        function updateAllAutoManagedProcesses() {
+            const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
+            for (let i = 0; i < nodeCount; i++) {
+                updateAutoManagedProcesses(i);
+            }
+        }
+
+        function updateTotalCores() {
+            let totalCores = 0;
+            document.querySelectorAll('.core-count-input').forEach(input => {
+                totalCores += parseInt(input.value, 10) || 0;
+            });
+            document.getElementById('total-core-display').textContent = totalCores;
+        }
+        
+        function updateProcessTotals() {
+            const allNodes = getAllNodesData();
+            
+            // Update user-configurable process totals
+            processes.forEach(processName => {
+                const total = getTotalProcessCount(allNodes, processName);
+                const totalElement = document.querySelector(`.total-process-count[data-process="${processName}"]`);
+                if (totalElement) {
+                    totalElement.textContent = `(${total})`;
+                }
+            });
+            
+            // Update auto-managed process totals
+            autoManagedProcesses.forEach(processName => {
+                let total = 0;
+                document.querySelectorAll(`.auto-managed-display[data-process="${processName}"]`).forEach(el => {
+                    total += parseInt(el.textContent, 10) || 0;
+                });
+                const totalElement = document.querySelector(`.total-process-count[data-process="${processName}"]`);
+                if (totalElement) {
+                    totalElement.textContent = `(${total})`;
+                }
+            });
+        }
+
+        function updateNotes() {
+            const notesList = document.getElementById('notes-list');
+            notesList.innerHTML = '';
+            const allNodes = getAllNodesData();
+            const nodeCount = allNodes.length;
+
+            processes.forEach(processName => {
+                const config = processConfig[processName];
+                if (!config.guidanceRules || config.guidanceRules.length === 0) return;
+
+                for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex++) {
+                    const coresInput = document.querySelector(`input.core-count-input[data-node-index="${nodeIndex}"]`);
+                    const cores = parseInt(coresInput?.value, 10) || 8;
+                    const processCount = allNodes[nodeIndex][processName] || 0;
+
+                    config.guidanceRules.forEach(rule => {
+                        if (rule.condition(processCount, cores, allNodes[nodeIndex], allNodes)) {
+                            const li = document.createElement('li');
+                            const severityClass = {
+                                'error': 'bg-red-50 border-red-300 text-red-800',
+                                'warning': 'bg-yellow-50 border-yellow-300 text-yellow-800',
+                                'info': 'bg-blue-50 border-blue-300 text-blue-800'
+                            }[rule.severity] || 'bg-gray-50 border-gray-300 text-gray-800';
+
+                            // Handle message as either a function or a string
+                            const messageText = typeof rule.message === 'function' 
+                                ? rule.message(processCount, cores, allNodes[nodeIndex], allNodes)
+                                : rule.message;
+
+                            li.className = `p-2 rounded border ${severityClass} text-sm`;
+                            li.innerHTML = `<strong>Node ${nodeIndex + 1} - ${processName}:</strong> ${messageText}`;
+                            notesList.appendChild(li);
                         }
                     });
                 }
-
-                // Check per-node rules
-                if (ruleset.notes) {
-                    // Check for per-node value triggers
-                    const perNodeNotes = ruleset.notes.filter(n => n.triggerValue);
-                    if (perNodeNotes.length > 0) {
-                        for (let i = 0; i < nodeCount; i++) {
-                            const input = document.querySelector(`input[data-process="${processName}"][data-node-index="${i}"]`);
-                            const val = (input && parseInt(input.value, 10)) || 0;
-                            
-                            perNodeNotes.forEach(note => {
-                                // Special check for vizqlserver rule
-                                if (processName === 'vizqlserver' && note.triggerValue === 4) {
-                                    const coreInput = document.querySelector(`input.core-count-input[data-node-index="${i}"]`);
-                                    const coreCount = (coreInput && parseInt(coreInput.value, 10)) || 8;
-                                    if (val >= 4 && coreCount < 16) {
-                                        addNote(`vizqlserver (Node ${i + 1}): 4+ VizQL Servers is best on 16+ cores (node has ${coreCount}).`, displayedNotes);
-                                    }
-                                } else if (val >= note.triggerValue) {
-                                    addNote(`${processName} (Node ${i + 1}): ${note.text}`, displayedNotes);
-                                }
-                            });
-                        }
-                    }
-                }
             });
 
-            // Check for "soft" co-location rules per node
-            for (let i = 0; i < nodeCount; i++) {
-                const vizqlInput = document.querySelector(`input[data-process="vizqlserver"][data-node-index="${i}"]`);
-                const vizportalInput = document.querySelector(`input[data-process="vizportal"][data-node-index="${i}"]`);
-                const backgrounderInput = document.querySelector(`input[data-process="backgrounder"][data-node-index="${i}"]`);
-                const coreInput = document.querySelector(`input.core-count-input[data-node-index="${i}"]`);
-
-                const coreCount = (coreInput && parseInt(coreInput.value, 10)) || 8;
-                const vizqlCount = (vizqlInput && parseInt(vizqlInput.value, 10)) || 0;
-                const vizportalCount = (vizportalInput && parseInt(vizportalInput.value, 10)) || 0;
-                const backgrounderCount = (backgrounderInput && parseInt(backgrounderInput.value, 10)) || 0;
-
-                // Rule: VizQL is present, but VizPortal (App Server) is not
-                if (vizqlCount > 0 && vizportalCount === 0) {
-                    addNote(`Node ${i + 1}: Has VizQL Server but no VizPortal (Application Server). It is recommended to co-locate them.`, displayedNotes);
-                }
-
-                // Rule: Check backgrounder count against cores
-                if (backgrounderCount > 0) {
-                    if (coreCount === 8 && (backgrounderCount < 4 || backgrounderCount > 6)) {
-                        addNote(`backgrounder (Node ${i + 1}): For 8 cores, 4-6 Backgrounders is recommended (currently ${backgrounderCount}).`, displayedNotes);
-                    } else if (coreCount === 16 && (backgrounderCount < 8 || backgrounderCount > 12)) {
-                        addNote(`backgrounder (Node ${i + 1}): For 16 cores, 8-12 Backgrounders is recommended (currently ${backgrounderCount}).`, displayedNotes);
-                    } else if (coreCount < 8 && backgrounderCount > (coreCount / 2)) {
-                        addNote(`backgrounder (Node ${i + 1}): ${backgrounderCount} Backgrounders may be high for ${coreCount} cores.`, displayedNotes);
-                    }
-                }
-            }
-
-            // Show or hide the notes container
-            if (displayedNotes.size > 0) {
-                if(notesContainer) notesContainer.style.display = 'none';
-            } else {
-                if(notesContainer) notesContainer.style.display = 'block';
-                notesList.innerHTML = '<li class="text-sm text-green-600">All checks pass! Configuration looks good.</li>';
-            }
-        }
-
-        function addNote(message, displayedNotes) {
-            if (!displayedNotes.has(message)) {
-                displayedNotes.add(message);
-                const notesList = document.getElementById('notes-list');
+            if (notesList.children.length === 0) {
                 const li = document.createElement('li');
-                li.className = 'text-sm text-yellow-700 p-2 bg-yellow-50 rounded';
-                li.textContent = message;
+                li.className = 'p-2 rounded bg-green-50 border border-green-300 text-green-800 text-sm';
+                li.innerHTML = '✓ Configuration looks good! No major issues detected.';
                 notesList.appendChild(li);
             }
         }
 
-        function applyTemplate(selectElement) {
-            const tplName = selectElement.value;
-            const nodeIndex = selectElement.dataset.nodeIndex;
-            if (!tplName) return;
-
-            const template = templates[tplName];
-            if (!template) return;
-
-            // Reset all inputs for this node to 0
-            processes.forEach(processName => {
-                const input = document.querySelector(`input[data-process="${processName}"][data-node-index="${nodeIndex}"]`);
-                if (input && processName !== 'hyper') { // Don't reset hyper
-                    input.value = 0;
-                }
-            });
-            
-            // Set core count (if specified in template, otherwise default)
-            const coreInput = document.querySelector(`input.core-count-input[data-node-index="${nodeIndex}"]`);
-            if (coreInput) {
-                coreInput.value = template['cores'] || 8;
-            }
-
-            // Apply template values
-            for (const processName in template) {
-                const input = document.querySelector(`input[data-process="${processName}"][data-node-index="${nodeIndex}"]`);
-                if (input) {
-                    input.value = template[processName];
-                }
-            }
-
-            // Reset dropdown
-            selectElement.value = "";
-            
-            // Re-run dependency checks
-            checkHyperDependencies(nodeIndex);
-
-            // Update everything
-            updateAll();
+        function updateAll() {
+            updateAllAutoManagedProcesses();
+            updateTotalCores();
+            updateProcessTotals();
+            updateNotes();
         }
+
+        // ===== COPY NODE CONFIGURATION =====
         
-        function handleCopyNode(selectElement) {
+        function copyNodeConfiguration(selectElement) {
             const sourceNodeIndex = selectElement.dataset.nodeIndex;
             const targetNodeIndex = selectElement.value;
             
-            if (targetNodeIndex === "") return; // No target selected
+            if (targetNodeIndex === "") return;
 
-            // 1. Copy Core Count
+            // Copy core count
             const sourceCoreInput = document.querySelector(`input.core-count-input[data-node-index="${sourceNodeIndex}"]`);
             const targetCoreInput = document.querySelector(`input.core-count-input[data-node-index="${targetNodeIndex}"]`);
             if (sourceCoreInput && targetCoreInput) {
                 targetCoreInput.value = sourceCoreInput.value;
             }
 
-            // 2. Copy all process counts
+            // Copy all process counts
             processes.forEach(processName => {
-                if (processName === 'hyper') return; // Skip hyper, it's automatic
-                
                 const sourceProcessInput = document.querySelector(`input[data-process="${processName}"][data-node-index="${sourceNodeIndex}"]`);
                 const targetProcessInput = document.querySelector(`input[data-process="${processName}"][data-node-index="${targetNodeIndex}"]`);
                 
@@ -883,16 +688,18 @@
                 }
             });
 
-            // 3. Re-run dependency checks on the target node
-            checkHyperDependencies(targetNodeIndex);
+            // Update auto-managed processes for target node
+            updateAutoManagedProcesses(targetNodeIndex);
 
-            // 4. Reset the dropdown
+            // Reset dropdown
             selectElement.value = "";
 
-            // 5. Update everything
+            // Update everything
             updateAll();
         }
 
+        // ===== TOGGLE GRAPHIC VIEW =====
+        
         function toggleGraphicView() {
             isGraphicView = !isGraphicView;
             const toggleButton = document.getElementById('toggle-graphic');
@@ -931,23 +738,21 @@
             }
         }
 
-        // --- NEW FUNCTIONS START ---
-
+        // ===== RESET GRID =====
+        
         function resetGrid() {
-            // NEW: Reset node count input to default
             document.getElementById('node-count').value = 4;
-
-            // Re-builds the grid based on the "Nodes" input and resets all values
-            buildTopologyGrid(); // This already sets isGraphicView = false
+            buildTopologyGrid();
             updateAll();
 
-            // Manually reset the toggle button's appearance
             const toggleButton = document.getElementById('toggle-graphic');
             toggleButton.textContent = 'Toggle Graphic View';
             toggleButton.classList.add('bg-gray-200', 'text-gray-800', 'hover:bg-gray-300');
             toggleButton.classList.remove('bg-green-600', 'text-white', 'hover:bg-green-700');
         }
 
+        // ===== EXPORT/IMPORT =====
+        
         function exportConfig() {
             try {
                 const nodeCount = parseInt(document.getElementById('node-count').value, 10) || 1;
@@ -986,9 +791,7 @@
 
         function importConfig(event) {
             const file = event.target.files[0];
-            if (!file) {
-                return;
-            }
+            if (!file) return;
 
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -1000,22 +803,18 @@
                         return;
                     }
 
-                    // 1. Set node count and rebuild grid
                     document.getElementById('node-count').value = config.nodeCount;
-                    buildTopologyGrid(); // This creates all the inputs
+                    buildTopologyGrid();
 
-                    // 2. Populate the grid
                     for (let i = 0; i < config.nodeCount; i++) {
                         const nodeData = config.nodes[i];
                         if (!nodeData) continue;
 
-                        // Set core count
                         const coreInput = document.querySelector(`input.core-count-input[data-node-index="${i}"]`);
                         if (coreInput && nodeData.cores) {
                             coreInput.value = nodeData.cores;
                         }
 
-                        // Set process counts
                         if (nodeData.processes) {
                             processes.forEach(processName => {
                                 const processInput = document.querySelector(`input[data-process="${processName}"][data-node-index="${i}"]`);
@@ -1026,7 +825,6 @@
                         }
                     }
 
-                    // 3. Update all totals and rules
                     updateAll();
 
                 } catch (error) {
@@ -1034,13 +832,22 @@
                 }
             };
             reader.readAsText(file);
-            
-            // Reset file input to allow importing the same file again
             event.target.value = null;
         }
 
-        // --- NEW FUNCTIONS END ---
+        // ===== EVENT LISTENERS =====
+        
+        document.getElementById('build-grid').addEventListener('click', buildTopologyGrid);
+        document.getElementById('toggle-graphic').addEventListener('click', toggleGraphicView);
+        document.getElementById('reset-grid').addEventListener('click', resetGrid);
+        document.getElementById('export-config').addEventListener('click', exportConfig);
+        document.getElementById('import-config-btn').addEventListener('click', () => {
+            document.getElementById('import-file').click();
+        });
+        document.getElementById('import-file').addEventListener('change', importConfig);
 
+        // ===== INITIALIZE =====
+        buildTopologyGrid();
     </script>
 </body>
 </html>
